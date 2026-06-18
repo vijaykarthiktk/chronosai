@@ -107,38 +107,28 @@ In production, Vault is deployed using Helm and configured with the Kubernetes a
 
 ---
 
-## Step 5: Build & Push Docker Image to Amazon ECR
+## Step 5: Build & Push Docker Image to GitHub Container Registry (GHCR)
 
-1.  Create an Amazon Elastic Container Registry (ECR) repository for the application:
+1.  Authenticate Docker to GitHub Container Registry (GHCR) using a GitHub Personal Access Token (PAT) with `write:packages` scope:
     ```bash
-    aws ecr create-repository \
-      --repository-name chronosai-analytics \
-      --region us-east-1
+    echo <GITHUB_PAT> | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
     ```
-2.  Authenticate Docker to your ECR registry (replace `<ACCOUNT_ID>` with your AWS Account ID):
-    ```bash
-    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
-    ```
-3.  Build and tag the production Docker image:
+2.  Build and tag the production Docker image (usernames must be lowercase):
     ```bash
     # Build container from workspace root
-    docker build -t chronosai-analytics:latest .
+    docker build -t ghcr.io/<github_username_lowercase>/chronosai-analytics:latest .
     
-    # Tag image to ECR structure
-    docker tag chronosai-analytics:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/chronosai-analytics:latest
-    ```
-4.  Push the image to Amazon ECR:
-    ```bash
-    docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/chronosai-analytics:latest
+    # Push image to GHCR
+    docker push ghcr.io/<github_username_lowercase>/chronosai-analytics:latest
     ```
 
 ---
 
 ## Step 6: Deploy the ChronosAI Application & HPA
 
-1.  Open `kubernetes/deployment.yaml` and update the `image:` attribute with your ECR image URL:
+1.  Open `kubernetes/deployment.yaml` and update the `image:` attribute with your GHCR image URL:
     ```yaml
-    image: <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/chronosai-analytics:latest
+    image: ghcr.io/<github_username_lowercase>/chronosai-analytics:latest
     ```
 2.  Deploy the ConfigMap, Application, Service, Ingress, and Horizontal Pod Autoscaler (HPA):
     ```bash
@@ -171,3 +161,24 @@ To scrape application metrics on EKS, we deploy the kube-prometheus-stack Helm c
       --create-namespace
     ```
 3.  Configure a Kubernetes `ServiceMonitor` resource to instruct Prometheus to scrape the ChronosAI service metrics endpoint on `/api/sim-metrics`.
+
+---
+
+## Step 8: Automate Deployment via GitHub Actions (CI/CD)
+
+The platform is configured with a fully automated CI/CD workflow defined in [.github/workflows/deploy.yml](file:///Users/vijaykarthik/Programming/Sem-4/s-2/devops./.github/workflows/deploy.yml).
+
+### 1. Configure Repository Secrets
+Navigate to your GitHub repository settings under **Settings > Secrets and variables > Actions** and create the following repository secrets:
+
+*   `AWS_ACCESS_KEY_ID`: Your AWS IAM User access key ID with EKS, ECR, VPC, and EC2 permissions.
+*   `AWS_SECRET_ACCESS_KEY`: Your AWS IAM User secret access key.
+
+### 2. Triggering the Workflow
+*   **Automatic Trigger**: The workflow executes automatically on every `git push` to the `main` branch.
+*   **Manual Trigger**: You can run the pipeline manually by navigating to the **Actions** tab in your GitHub repository, selecting **ChronosAI CI/CD - EKS Deployment**, and clicking **Run workflow**.
+
+### 3. Pipeline Actions Workflow
+1.  **Job 1 (IaC)**: Configures credentials, sets up Terraform, and executes `terraform apply` to ensure the EKS cluster and active node groups match state.
+2.  **Job 2 (Build & Deploy)**: Builds the Docker image, tags it with the unique git commit SHA, pushes the image to GitHub Container Registry (GHCR), logs in to EKS, creates namespaces/secrets, injects GHCR image tags, deploys manifests to Kubernetes, and monitors rollout status.
+
