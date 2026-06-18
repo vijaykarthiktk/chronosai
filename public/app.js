@@ -31,8 +31,8 @@ function initCharts() {
         {
           label: 'North America',
           data: [],
-          borderColor: '#00F2FE',
-          backgroundColor: 'rgba(0, 242, 254, 0.05)',
+          borderColor: '#3B82F6',
+          backgroundColor: 'rgba(59, 130, 246, 0.04)',
           borderWidth: 2,
           tension: 0.4,
           fill: true
@@ -40,8 +40,8 @@ function initCharts() {
         {
           label: 'Eurozone',
           data: [],
-          borderColor: '#3B82F6',
-          backgroundColor: 'rgba(59, 130, 246, 0.05)',
+          borderColor: '#6366F1',
+          backgroundColor: 'rgba(99, 102, 241, 0.04)',
           borderWidth: 2,
           tension: 0.4,
           fill: true
@@ -50,7 +50,7 @@ function initCharts() {
           label: 'Asia-Pacific',
           data: [],
           borderColor: '#10B981',
-          backgroundColor: 'rgba(16, 185, 129, 0.05)',
+          backgroundColor: 'rgba(16, 185, 129, 0.04)',
           borderWidth: 2,
           tension: 0.4,
           fill: true
@@ -62,12 +62,12 @@ function initCharts() {
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          labels: { color: '#9CA3AF', font: { family: 'Outfit', size: 11 } }
+          labels: { color: '#475569', font: { family: 'Inter', size: 11 } }
         }
       },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: '#9CA3AF' } },
-        y: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: '#9CA3AF' } }
+        x: { grid: { color: 'rgba(15, 23, 42, 0.06)' }, ticks: { color: '#64748B' } },
+        y: { grid: { color: 'rgba(15, 23, 42, 0.06)' }, ticks: { color: '#64748B' } }
       }
     }
   });
@@ -79,7 +79,7 @@ function initCharts() {
     data: {
       datasets: [{
         data: [0, 100],
-        backgroundColor: ['#00F2FE', 'rgba(255,255,255,0.05)'],
+        backgroundColor: ['#3B82F6', '#E2E8F0'],
         borderWidth: 0
       }]
     },
@@ -99,7 +99,7 @@ function initCharts() {
     data: {
       datasets: [{
         data: [0, 100],
-        backgroundColor: ['#3B82F6', 'rgba(255,255,255,0.05)'],
+        backgroundColor: ['#6366F1', '#E2E8F0'],
         borderWidth: 0
       }]
     },
@@ -116,10 +116,10 @@ function initCharts() {
 // Fetch dashboard datasets and updates
 async function pollData() {
   try {
-    const statePromise = fetch('/api/state').then(r => r.json());
-    const forecastPromise = fetch('/api/forecast').then(r => r.json());
-    const logsPromise = fetch('/api/sim-logs').then(r => r.json());
-    const secretsPromise = fetch('/api/sim-secrets');
+    const statePromise = fetch('/api/state').then(r => r.ok ? r.json() : null).catch(() => null);
+    const forecastPromise = fetch('/api/forecast').then(r => r.ok ? r.json() : null).catch(() => null);
+    const logsPromise = fetch('/api/sim-logs').then(r => r.ok ? r.json() : null).catch(() => null);
+    const secretsPromise = fetch('/api/sim-secrets').catch(() => null);
 
     const [state, forecast, logs, secretsRes] = await Promise.all([
       statePromise,
@@ -128,13 +128,21 @@ async function pollData() {
       secretsPromise
     ]);
 
-    updateSystemMetrics(state);
-    updateForecastCards(forecast);
-    updateEconomicChart(forecast);
-    updateK8sPods(state);
-    updateSelfHealingTimeline(state);
-    updateLogTerminal(logs);
-    updateVaultView(secretsRes);
+    if (state) {
+      updateSystemMetrics(state);
+      updateK8sPods(state);
+      updateSelfHealingTimeline(state);
+    }
+    if (forecast) {
+      updateForecastCards(forecast);
+      updateEconomicChart(forecast);
+    }
+    if (logs) {
+      updateLogTerminal(logs);
+    }
+    if (secretsRes) {
+      updateVaultView(secretsRes);
+    }
   } catch (error) {
     console.error('Error polling dashboard datasets:', error);
   }
@@ -166,7 +174,7 @@ function updateSystemMetrics(state) {
 
   // Update gauges
   cpuGaugeInstance.data.datasets[0].data = [state.cpuLoad, 100 - state.cpuLoad];
-  cpuGaugeInstance.data.datasets[0].backgroundColor[0] = state.cpuLoad > 80 ? '#F43F5E' : '#00F2FE';
+  cpuGaugeInstance.data.datasets[0].backgroundColor[0] = state.cpuLoad > 80 ? '#F43F5E' : '#3B82F6';
   cpuGaugeInstance.update();
 
   ramGaugeInstance.data.datasets[0].data = [state.ramUsage, 100 - state.ramUsage];
@@ -204,7 +212,7 @@ function updateForecastCards(forecast) {
     cell.className = 'forecast-cell';
     cell.innerHTML = `
       <div class="cell-title">${r.name}</div>
-      <div class="cell-val">${r.gdpGrowth > 0 ? '+' : ''}${r.gdpGrowth}% <span style="font-size:12px; font-weight:normal; color:#9CA3AF">GDP</span></div>
+      <div class="cell-val">${r.gdpGrowth > 0 ? '+' : ''}${r.gdpGrowth}% <span style="font-size:12px; font-weight:normal; color:#64748B">GDP</span></div>
       <div class="cell-sub">
         <span>Inflation: <strong>${r.cpiInflation}%</strong></span>
         <span>Risk: <strong class="risk-level ${riskClass}">${r.riskIndex}</strong></span>
