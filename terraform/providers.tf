@@ -10,6 +10,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.20"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 
   # In actual deployment, we would configure an S3 backend for tfstate lock
