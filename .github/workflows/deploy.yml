@@ -89,6 +89,9 @@ jobs:
             --set "server.dev.token=myroottoken" \
             -n chronosai
           
+          # Allow EKS controller time to register the StatefulSet pods
+          sleep 10
+          
           # Wait for Vault pod to be ready
           kubectl wait --for=condition=Ready pod/vault-0 -n chronosai --timeout=150s
           
