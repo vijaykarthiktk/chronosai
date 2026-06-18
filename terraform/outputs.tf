@@ -13,22 +13,22 @@ output "private_subnets" {
   value       = aws_subnet.private_subnet[*].id
 }
 
-output "eks_cluster_name" {
-  description = "EKS Cluster identity name"
-  value       = aws_eks_cluster.chronosai_eks.name
+output "alb_dns_name" {
+  description = "Public Application Load Balancer DNS URL"
+  value       = aws_lb.chronos_alb.dns_name
 }
 
-output "eks_cluster_endpoint" {
-  description = "Control plane Endpoint URL for API server communication"
-  value       = aws_eks_cluster.chronosai_eks.endpoint
+output "rds_endpoint" {
+  description = "Connection endpoint for RDS PostgreSQL Database instance"
+  value       = aws_db_instance.postgres.endpoint
 }
 
-output "eks_cluster_security_group_id" {
-  description = "EKS Security Group ID configured on control plane"
-  value       = aws_security_group.eks_cluster_sg.id
+output "ecs_cluster_name" {
+  description = "ECS cluster identifier name"
+  value       = aws_ecs_cluster.chronos_cluster.name
 }
 
-output "eks_cluster_certificate_authority" {
-  description = "Base64 encoded certificate data for cluster validation"
-  value       = aws_eks_cluster.chronosai_eks.certificate_authority[0].data
+output "ecs_service_name" {
+  description = "ECS service identifier name"
+  value       = aws_ecs_service.chronos_service.name
 }

@@ -1,4 +1,4 @@
-name: ChronosAI CI/CD - EKS Deployment
+name: ChronosAI CI/CD - ECS Deployment
 
 on:
   push:
@@ -8,7 +8,8 @@ on:
 
 env:
   AWS_REGION: "us-east-2"
-  EKS_CLUSTER_NAME: "chronosai-production-cluster"
+  ECS_CLUSTER_NAME: "chronosai-ecs-cluster"
+  ECS_SERVICE_NAME: "chronosai-service"
 
 permissions:
   contents: read
@@ -16,7 +17,7 @@ permissions:
 
 jobs:
 
-  # Job 2: Build App Image & Push to GHCR (Independent Job running in PARALLEL)
+  # Job 1: Build App Image & Push to GHCR (Runs first to ensure the image exists)
   build-and-push:
     name: Build & Push Container to GHCR
     runs-on: ubuntu-latest
@@ -46,9 +47,9 @@ jobs:
           docker push $IMAGE_NAME:$IMAGE_TAG
           docker push $IMAGE_NAME:latest
 
-  # Job 3: Kubernetes Deploy (Dependent Job: runs after Docker image is pushed to GHCR)
-  kubernetes-deploy:
-    name: Deploy Workloads to EKS
+  # Job 2: Infrastructure Provisioning & ECS Deployment
+  ecs-deploy:
+    name: Provision & Deploy to ECS Fargate
     needs: [build-and-push]
     runs-on: ubuntu-latest
     steps:
@@ -62,83 +63,44 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Configure Kubectl context for EKS
-        run: |
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
 
-      - name: Setup Deployment Secrets & Configs
+      - name: Provision Infrastructure via Terraform
         run: |
-          # Ensure target namespace exists
-          kubectl create namespace chronosai --dry-run=client -o yaml | kubectl apply -f -
+          cd terraform
+          terraform init
           
-          # Deploy postgres DB secrets
-          kubectl create secret generic chronosai-db-secrets \
-            --from-literal=username="postgres" \
-            --from-literal=password="SuperSecurePassword123" \
-            --namespace chronosai --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Deploy & Configure HashiCorp Vault on EKS
-        run: |
-          # Add the HashiCorp Helm repository
-          helm repo add hashicorp https://helm.releases.hashicorp.com
-          helm repo update
-          
-          # Install Vault in dev mode on EKS (namespace: chronosai)
-          helm upgrade --install vault hashicorp/vault \
-            --set "server.dev.enabled=true" \
-            --set "server.dev.token=myroottoken" \
-            -n chronosai
-          
-          # Allow EKS controller time to register the StatefulSet pods
-          sleep 10
-          
-          # Wait for Vault pod to be ready
-          kubectl wait --for=condition=Ready pod/vault-0 -n chronosai --timeout=150s
-          
-          # Execute bootstrap script inside the EKS Vault container to populate secrets
-          kubectl exec vault-0 -n chronosai -- /bin/sh -c '
-            export VAULT_ADDR="http://127.0.0.1:8200"
-            vault login token="myroottoken"
-            if ! vault secrets list | grep -q "^secret/"; then
-              vault secrets enable -path=secret kv-v2
-            fi
-            vault kv put secret/chronosai/database \
-              db_username="postgres" \
-              db_password="SuperSecurePassword123" \
-              jwt_signing_key="HS256-vault-managed-token-key-chronosai-platform-2026"
-          '
-
-      - name: Deploy Workloads to EKS Cluster
-        env:
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          # Apply PostgreSQL DB configurations
-          kubectl apply -f kubernetes/postgres.yaml -n chronosai
-          kubectl apply -f kubernetes/configmap.yaml -n chronosai
-          
-          # Inject the dynamic GHCR image tag into deployment.yaml before applying
+          # Build dynamic image tag matching this build's GHCR container
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           IMAGE_NAME="ghcr.io/$OWNER_LC/chronosai-analytics"
-          sed -i "s|image: chronosai-analytics:latest|image: $IMAGE_NAME:$IMAGE_TAG|g" kubernetes/deployment.yaml
           
-          # Deploy app and load balancers
-          kubectl apply -f kubernetes/deployment.yaml -n chronosai
-          kubectl apply -f kubernetes/service.yaml -n chronosai
-          kubectl apply -f kubernetes/ingress.yaml -n chronosai
-          kubectl apply -f kubernetes/hpa.yaml -n chronosai
-          
-          # Install Prometheus Operator ServiceMonitor CRD to support the ServiceMonitor kind
-          kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
-          
-          # Deploy ServiceMonitor monitoring rules
-          kubectl apply -f kubernetes/servicemonitor.yaml -n chronosai
+          # Run terraform apply passing the built image as an input parameter
+          terraform apply -var="container_image=$IMAGE_NAME:${{ github.sha }}" -auto-approve
 
-      - name: Verify Workloads Rollout Status
+      - name: Force ECS Service Redeployment
         run: |
-          echo "=== Active Pods ==="
-          kubectl get pods -n chronosai
-          echo "=== LoadBalancer Service URL ==="
-          kubectl get service chronosai-service -n chronosai
-          echo "=== Deploying Rollout Checks ==="
-          kubectl rollout status deployment/chronosai-postgres-deployment -n chronosai --timeout=120s
-          kubectl rollout status deployment/chronosai-deployment -n chronosai --timeout=180s
+          # Trigger service update to pull the new container image immediately
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --service ${{ env.ECS_SERVICE_NAME }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Verify Service Rollout Status
+        run: |
+          echo "=== Monitoring ECS Rollout Status ==="
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER_NAME }} \
+            --services ${{ env.ECS_SERVICE_NAME }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "=== Active ECS Task Health ==="
+          aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          
+          cd terraform
+          ALB_DNS=$(terraform output -raw alb_dns_name)
+          echo "=== DEPLOYMENT SUCCESSFUL ==="
+          echo "Your ChronosAI app is publicly accessible at: http://$ALB_DNS"

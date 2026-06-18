@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.20"
-    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
@@ -28,14 +24,4 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
-}
-
-provider "kubernetes" {
-  host                   = aws_eks_cluster.chronosai_eks.endpoint
-  cluster_ca_certificate = base64decode(aws_eks_cluster.chronosai_eks.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.cluster.token
-}
-
-data "aws_eks_cluster_auth" "cluster" {
-  name = aws_eks_cluster.chronosai_eks.name
 }
