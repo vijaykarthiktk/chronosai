@@ -6,6 +6,33 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// Structured JSON Logging Middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    // Log API requests (exclude frontend static assets to maintain clean container logs)
+    if (req.originalUrl.startsWith('/api') || req.originalUrl === '/health' || req.originalUrl === '/metrics' || req.originalUrl === '/version') {
+      const duration = Date.now() - start;
+      const log = {
+        timestamp: new Date().toISOString(),
+        endpoint: req.originalUrl,
+        method: req.method,
+        status: res.statusCode,
+        response_time: `${duration}ms`
+      };
+      console.log(JSON.stringify(log));
+
+      // Dynamic real-time metrics tracking
+      systemState.totalRequests = (systemState.totalRequests || 0) + 1;
+      if (res.statusCode >= 400) {
+        systemState.totalErrors = (systemState.totalErrors || 0) + 1;
+      }
+    }
+  });
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Global state representation (runs in memory as fallback, mirrors database if connected)
@@ -31,6 +58,7 @@ let systemState = {
 // Database connection pool reference
 let dbPool = null;
 let isInitializing = false;
+let currentDbPassword = process.env.DB_PASSWORD || 'SuperSecurePassword123';
 
 // Self-healing startup initialization with automatic reconnect retries
 async function initializeApp() {
@@ -41,7 +69,7 @@ async function initializeApp() {
   const vaultToken = process.env.VAULT_TOKEN || 'myroottoken';
   
   let dbUser = process.env.DB_USER || 'postgres';
-  let dbPassword = process.env.DB_PASSWORD || 'SuperSecurePassword123';
+  let dbPassword = currentDbPassword;
   const dbHost = process.env.DB_HOST || '127.0.0.1';
   const dbName = process.env.DB_NAME || 'chronosai_forecasting';
 
@@ -57,6 +85,7 @@ async function initializeApp() {
       if (data && data.data && data.data.data) {
         dbUser = data.data.data.db_username || dbUser;
         dbPassword = data.data.data.db_password || dbPassword;
+        currentDbPassword = dbPassword; // Sync state
         systemState.vaultStatus = "CONNECTED";
         console.log("[Self-Healing] Vault connection: OPERATIONAL");
       }
@@ -174,8 +203,57 @@ async function initializeApp() {
   }
 }
 
+let artificialLatency = 0;
+let cpuBurnerInterval = null;
+let trafficSurgeInterval = null;
+
+const { Worker } = require('worker_threads');
+let cpuWorkers = [];
+
+function startCpuBurner() {
+  stopCpuBurner();
+  for (let i = 0; i < 2; i++) {
+    try {
+      const worker = new Worker(`
+        const { parentPort } = require('worker_threads');
+        let running = true;
+        parentPort.on('message', (msg) => {
+          if (msg === 'stop') {
+            process.exit(0);
+          }
+        });
+        function burn() {
+          if (!running) return;
+          const start = Date.now();
+          while (Date.now() - start < 80) {
+            Math.random() * Math.random();
+          }
+          setTimeout(burn, 20);
+        }
+        burn();
+      `, { eval: true });
+      cpuWorkers.push(worker);
+    } catch (err) {
+      console.error("[Self-Healing] Failed to spawn CPU burner worker thread:", err.message);
+    }
+  }
+}
+
+function stopCpuBurner() {
+  cpuWorkers.forEach(w => {
+    try {
+      w.postMessage('stop');
+      w.terminate();
+    } catch (e) {}
+  });
+  cpuWorkers = [];
+}
+
 // Helpers to query active database state
 async function queryState() {
+  if (artificialLatency > 0) {
+    await new Promise(resolve => setTimeout(resolve, artificialLatency));
+  }
   // If connection is lost, try to reinitialize
   if (!dbPool) {
     initializeApp();
@@ -440,6 +518,9 @@ app.post('/api/crisis', async (req, res) => {
     await addLog("ERROR", "Global Economic Event: Market Crash detected. Critical analytical request surge.", "gateway");
     await addLog("WARNING", "CPU utilization exceeded threshold (80%). Triggering scaling request.", "orchestrator");
 
+    // Event-loop safe background CPU burner using worker threads
+    startCpuBurner();
+
     setTimeout(async () => {
       const curState = await queryState();
       curState.status = "AUTOSCALING";
@@ -449,6 +530,9 @@ app.post('/api/crisis', async (req, res) => {
     }, 3000);
 
     setTimeout(async () => {
+      // Cease CPU load during recovery phase
+      stopCpuBurner();
+
       const curState = await queryState();
       curState.status = "RECOVERING";
       curState.errorRate = 0.5;
@@ -484,8 +568,63 @@ app.post('/api/crisis', async (req, res) => {
     }, 3000);
 
     setTimeout(async () => {
+      const rotatedPassword = "SuperSecurePassword_" + Math.random().toString(36).substring(2, 10);
+      
+      // 1. Rotate the PostgreSQL password in the database
+      if (dbPool) {
+        try {
+          await dbPool.query(`ALTER USER postgres WITH PASSWORD '${rotatedPassword}'`);
+          console.log("[Self-Healing] PostgreSQL password rotated successfully in DB.");
+        } catch (err) {
+          console.error("[Self-Healing] Failed to alter PostgreSQL password in DB:", err.message);
+        }
+      }
+
+      // 2. Write rotated credentials to HashiCorp Vault KV v2 engine
+      const vaultAddr = process.env.VAULT_ADDR || 'http://127.0.0.1:8200';
+      const vaultToken = process.env.VAULT_TOKEN || 'myroottoken';
+      try {
+        await fetch(`${vaultAddr}/v1/secret/data/chronosai/database`, {
+          method: 'POST',
+          headers: { 'X-Vault-Token': vaultToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            data: {
+              db_username: "postgres",
+              db_password: rotatedPassword,
+              last_rotation: new Date().toISOString(),
+              rotation_reason: "Cyber Attack Mitigation - Automated IPS Action",
+              jwt_signing_key: "HS256-vault-managed-token-key-chronosai-platform-2026"
+            }
+          })
+        });
+        console.log("[Self-Healing] Rotated database credentials saved to Vault.");
+      } catch (err) {
+        console.warn("[Cyber Attack simulation] Real Vault write error:", err.message);
+      }
+
+      // 3. Recreate the database connection pool with the new rotated password
+      currentDbPassword = rotatedPassword;
+      if (dbPool) {
+        const oldPool = dbPool;
+        dbPool = null;
+        oldPool.end().catch(() => {});
+      }
+
+      const dbHost = process.env.DB_HOST || '127.0.0.1';
+      const dbName = process.env.DB_NAME || 'chronosai_forecasting';
+      dbPool = new Pool({
+        user: 'postgres',
+        password: rotatedPassword,
+        host: dbHost,
+        database: dbName,
+        port: 5432,
+        connectionTimeoutMillis: 3000
+      });
+      console.log("[Self-Healing] Recreated database pool with rotated credentials.");
+
       const curState = await queryState();
       curState.vaultStatus = "CONNECTED";
+      curState.dbStatus = "CONNECTED";
       curState.errorRate = 0.1;
       await updateState(curState);
       await addLog("INFO", "Vault Admin Tool: Unsealed HashiCorp Vault using shamir split keys. Rotated DB secrets.", "security");
@@ -507,6 +646,9 @@ app.post('/api/crisis', async (req, res) => {
     state.totalErrors += 250;
     await updateState(state);
 
+    // Proper Load: Inject real query delay latency into database handler queries
+    artificialLatency = 350;
+
     await addLog("CRITICAL", "Health Check: AWS Region 'us-east-1' network connectivity loss detected.", "dns-routing");
     await addLog("WARNING", "Database read replica latency exceeded SLA (350ms).", "database");
 
@@ -518,6 +660,9 @@ app.post('/api/crisis', async (req, res) => {
     }, 2500);
 
     setTimeout(async () => {
+      // Clear artificial delay upon routing recovery
+      artificialLatency = 0;
+
       const curState = await queryState();
       curState.activeRegion = "eu-west-1";
       curState.status = "RECOVERING";
@@ -544,6 +689,14 @@ app.post('/api/crisis', async (req, res) => {
     state.totalErrors += 42;
     await updateState(state);
 
+    // Proper Load: Flood Express endpoints internally to trigger real HTTP traffic peaks
+    if (trafficSurgeInterval) clearInterval(trafficSurgeInterval);
+    trafficSurgeInterval = setInterval(() => {
+      for (let i = 0; i < 40; i++) {
+        fetch(`http://127.0.0.1:${PORT}/health`).catch(() => {});
+      }
+    }, 100);
+
     await addLog("INFO", "Logistics Watchdog: Unprecedented surge in ocean shipping data logs ingestion request.", "analytics");
     await addLog("WARNING", "Kubernetes Node Autoscale: Requesting additional provisioned nodes from AWS AutoScaling Group.", "orchestrator");
 
@@ -556,6 +709,12 @@ app.post('/api/crisis', async (req, res) => {
     }, 3000);
 
     setTimeout(async () => {
+      // Halt internal flood traffic generator during scaling stabilization
+      if (trafficSurgeInterval) {
+        clearInterval(trafficSurgeInterval);
+        trafficSurgeInterval = null;
+      }
+
       const curState = await queryState();
       curState.status = "RECOVERING";
       curState.cpuLoad = 32.5;
@@ -580,6 +739,69 @@ app.post('/api/crisis', async (req, res) => {
 
 // Reset System State
 app.post('/api/reset', async (req, res) => {
+  // Clear any active simulated load intervals
+  if (cpuBurnerInterval) {
+    clearInterval(cpuBurnerInterval);
+    cpuBurnerInterval = null;
+  }
+  if (trafficSurgeInterval) {
+    clearInterval(trafficSurgeInterval);
+    trafficSurgeInterval = null;
+  }
+  stopCpuBurner();
+  artificialLatency = 0;
+
+  // Restore default PostgreSQL credentials if they were rotated
+  if (currentDbPassword !== "SuperSecurePassword123") {
+    if (dbPool) {
+      try {
+        await dbPool.query(`ALTER USER postgres WITH PASSWORD 'SuperSecurePassword123'`);
+        console.log("[Self-Healing] Restored default database password.");
+      } catch (err) {
+        console.error("[Self-Healing] Failed to restore default DB password:", err.message);
+      }
+    }
+
+    const vaultAddr = process.env.VAULT_ADDR || 'http://127.0.0.1:8200';
+    const vaultToken = process.env.VAULT_TOKEN || 'myroottoken';
+    try {
+      await fetch(`${vaultAddr}/v1/secret/data/chronosai/database`, {
+        method: 'POST',
+        headers: { 'X-Vault-Token': vaultToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: {
+            db_username: "postgres",
+            db_password: "SuperSecurePassword123",
+            last_rotation: new Date().toISOString(),
+            rotation_reason: "Simulation Reset to Default Credentials",
+            jwt_signing_key: "HS256-vault-managed-token-key-chronosai-platform-2026"
+          }
+        })
+      });
+      console.log("[Self-Healing] Restored default Vault credentials.");
+    } catch (err) {
+      console.error("[Self-Healing] Failed to restore Vault credentials:", err.message);
+    }
+
+    currentDbPassword = "SuperSecurePassword123";
+    if (dbPool) {
+      const oldPool = dbPool;
+      dbPool = null;
+      oldPool.end().catch(() => {});
+    }
+
+    const dbHost = process.env.DB_HOST || '127.0.0.1';
+    const dbName = process.env.DB_NAME || 'chronosai_forecasting';
+    dbPool = new Pool({
+      user: 'postgres',
+      password: 'SuperSecurePassword123',
+      host: dbHost,
+      database: dbName,
+      port: 5432,
+      connectionTimeoutMillis: 3000
+    });
+  }
+
   const curState = await queryState();
   const resetObj = {
     status: "OPTIMAL",
@@ -590,7 +812,7 @@ app.post('/api/reset', async (req, res) => {
     requestRate: 420,
     errorRate: 0.01,
     dbStatus: dbPool ? "CONNECTED" : "DISCONNECTED",
-    vaultStatus: curState.vaultStatus === "CONNECTED" ? "CONNECTED" : "CONNECTED",
+    vaultStatus: "CONNECTED",
     activeRegion: "us-east-1",
     healedCount: curState.healedCount,
     dbLatency: 4,
@@ -600,6 +822,187 @@ app.post('/api/reset', async (req, res) => {
   await updateState(resetObj);
   await addLog("INFO", "System state manual reset executed. Setting target state to OPTIMAL.", "orchestrator");
   res.json({ status: "RESET_COMPLETED", state: resetObj });
+});
+
+// ==========================================================================
+// Case Study DevOps Endpoints
+// ==========================================================================
+
+// Liveness/Readiness probe
+app.get('/health', (req, res) => {
+  res.json({
+    status: "healthy",
+    service: "chronosai-api",
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Version endpoint
+app.get('/version', (req, res) => {
+  res.json({
+    version: "2.4.1",
+    buildNumber: "142",
+    environment: "Production (EKS)",
+    pipelineStatus: "SUCCESS",
+    lastDeploymentTime: "2026-06-18T12:00:00Z"
+  });
+});
+
+// Prometheus Scrape Endpoint
+app.get('/metrics', async (req, res) => {
+  const state = await queryState();
+  res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  const metrics = `
+# HELP chronosai_cpu_utilization CPU utilization percentage
+# TYPE chronosai_cpu_utilization gauge
+chronosai_cpu_utilization ${state.cpuLoad}
+
+# HELP chronosai_memory_utilization RAM utilization percentage
+# TYPE chronosai_memory_utilization gauge
+chronosai_memory_utilization ${state.ramUsage}
+
+# HELP chronosai_http_requests_total Total HTTP requests processed
+# TYPE chronosai_http_requests_total counter
+chronosai_http_requests_total ${state.totalRequests}
+
+# HELP chronosai_http_errors_total Total HTTP errors encountered
+# TYPE chronosai_http_errors_total counter
+chronosai_http_errors_total ${state.totalErrors}
+
+# HELP chronosai_active_pods Active replica count
+# TYPE chronosai_active_pods gauge
+chronosai_active_pods ${state.replicas}
+
+# HELP chronosai_database_connected Database connectivity state (1 = connected, 0 = disconnected)
+# TYPE chronosai_database_connected gauge
+chronosai_database_connected ${state.dbStatus === "CONNECTED" ? 1 : 0}
+
+# HELP chronosai_vault_connected HashiCorp Vault connection status (1 = operational, 0 = sealed/error)
+# TYPE chronosai_vault_connected gauge
+chronosai_vault_connected ${state.vaultStatus === "CONNECTED" ? 1 : 0}
+
+# HELP chronosai_active_region Current active deployment region (1 = US East, 2 = EU West)
+# TYPE chronosai_active_region gauge
+chronosai_active_region ${state.activeRegion === "us-east-1" ? 1 : 2}
+`;
+  res.send(metrics);
+});
+
+// Jobs API for Analytics tab
+app.get('/api/jobs', async (req, res) => {
+  const state = await queryState();
+  
+  let runningCount = 2;
+  let completedCount = 124;
+  let failedCount = 3;
+  let avgProcessingTime = 14.2;
+  
+  if (state.crisisType === "analytical_surge") {
+    runningCount = 8;
+    completedCount = 142;
+    avgProcessingTime = 22.4;
+  } else if (state.crisisType === "market_crash") {
+    runningCount = 5;
+    completedCount = 118;
+    failedCount = 8;
+    avgProcessingTime = 18.6;
+  } else if (state.crisisType === "region_outage") {
+    runningCount = 1;
+    failedCount = 12;
+  }
+
+  const jobsList = [
+    { id: "JOB-4812", name: "Macroeconomic Trend Analysis - APAC", status: state.crisisType === "region_outage" ? "FAILED" : "RUNNING", duration: "12s", timestamp: new Date(Date.now() - 12000).toISOString() },
+    { id: "JOB-4811", name: "Commodity Index Forecasting", status: "RUNNING", duration: "4s", timestamp: new Date(Date.now() - 4000).toISOString() },
+    { id: "JOB-4810", name: "Inflation Impact Simulator", status: "COMPLETED", duration: "18s", timestamp: new Date(Date.now() - 30000).toISOString() },
+    { id: "JOB-4809", name: "Regional Trade Flow Predictor", status: "COMPLETED", duration: "24s", timestamp: new Date(Date.now() - 60000).toISOString() },
+    { id: "JOB-4808", name: "Federal Reserve Decision Risk Assessment", status: state.crisisType === "market_crash" ? "FAILED" : "COMPLETED", duration: "15s", timestamp: new Date(Date.now() - 90000).toISOString() }
+  ];
+
+  if (state.crisisType === "analytical_surge") {
+    jobsList.unshift(
+      { id: "JOB-4816", name: "Surge Analysis - Logistics Flow", status: "RUNNING", duration: "2s", timestamp: new Date().toISOString() },
+      { id: "JOB-4815", name: "Surge Analysis - Port Congestion", status: "RUNNING", duration: "5s", timestamp: new Date(Date.now() - 5000).toISOString() },
+      { id: "JOB-4814", name: "Surge Analysis - Freight Rates", status: "RUNNING", duration: "8s", timestamp: new Date(Date.now() - 8000).toISOString() }
+    );
+  }
+
+  res.json({
+    runningCount,
+    completedCount,
+    failedCount,
+    avgProcessingTime,
+    jobs: jobsList
+  });
+});
+
+// Alerts API for Alerts tab
+app.get('/api/alerts', async (req, res) => {
+  const state = await queryState();
+  const alertsList = [];
+
+  if (state.crisisType === "market_crash") {
+    alertsList.push({
+      id: "ALT-280",
+      type: "High CPU Alert",
+      message: `System CPU load is abnormally high: ${state.cpuLoad}%`,
+      severity: "WARNING",
+      timestamp: new Date().toISOString(),
+      status: "ACTIVE"
+    });
+  } else if (state.crisisType === "cyber_attack") {
+    alertsList.push({
+      id: "ALT-281",
+      type: "Security Event",
+      message: "Security Event: Vault auto-sealed due to brute force signature attempts.",
+      severity: "CRITICAL",
+      timestamp: new Date().toISOString(),
+      status: "ACTIVE"
+    });
+  } else if (state.crisisType === "region_outage") {
+    alertsList.push({
+      id: "ALT-282",
+      type: "Region Failure",
+      message: "Infrastructure Incident: Active region 'us-east-1' network connectivity loss.",
+      severity: "CRITICAL",
+      timestamp: new Date().toISOString(),
+      status: "ACTIVE"
+    });
+  } else if (state.crisisType === "analytical_surge") {
+    alertsList.push({
+      id: "ALT-283",
+      type: "Infrastructure Incident",
+      message: "Autoscaling Alert: Ingestion queue limits exceeded threshold.",
+      severity: "INFO",
+      timestamp: new Date().toISOString(),
+      status: "ACTIVE"
+    });
+  }
+
+  const historyAlerts = [
+    { id: "ALT-278", type: "Service Recovery Event", message: "Database read replica failover successfully resolved", severity: "INFO", timestamp: new Date(Date.now() - 3600000).toISOString(), status: "RESOLVED" },
+    { id: "ALT-277", type: "Failed Deployment", message: "Deployment version rollback: v2.4.0 failed health check in dev environment", severity: "WARNING", timestamp: new Date(Date.now() - 7200000).toISOString(), status: "RESOLVED" },
+    { id: "ALT-276", type: "Security Event", message: "Rotated root TLS certificates in secure Vault path", severity: "INFO", timestamp: new Date(Date.now() - 86400000).toISOString(), status: "RESOLVED" }
+  ];
+
+  res.json([...alertsList, ...historyAlerts]);
+});
+
+// Centralized Error Handling Middleware
+app.use((err, req, res, next) => {
+  const log = {
+    timestamp: new Date().toISOString(),
+    endpoint: req.originalUrl,
+    method: req.method,
+    status: 500,
+    error: err.message
+  };
+  console.error(JSON.stringify(log));
+  res.status(500).json({
+    status: "error",
+    message: "Internal Server Error",
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Boot application

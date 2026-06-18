@@ -26,6 +26,9 @@ setTimeout(async () => {
   }
 
   try {
+    console.log('0. Resetting state...');
+    await postJson('http://localhost:4000/api/reset');
+
     console.log('1. Testing /api/state...');
     const state = await fetchJson('http://localhost:4000/api/state');
     assert(state.status === 'OPTIMAL', 'Status should be OPTIMAL');
@@ -56,6 +59,35 @@ setTimeout(async () => {
     const secrets = await fetchJson('http://localhost:4000/api/sim-secrets');
     assert(secrets.status === 'SUCCESS' || secrets.status === 'ERROR', 'Vault retrieval status should be SUCCESS or ERROR');
     console.log('PASS: /api/sim-secrets returns valid Vault status.');
+
+    console.log('6. Testing /health (Kubernetes Liveness check)...');
+    const health = await fetchJson('http://localhost:4000/health');
+    assert(health.status === 'healthy', 'Health check should be healthy');
+    assert(health.service === 'chronosai-api', 'Service tag should match');
+    console.log('PASS: /health check succeeds.');
+
+    console.log('7. Testing /version (App version tag)...');
+    const version = await fetchJson('http://localhost:4000/version');
+    assert(version.version === '2.4.1', 'Version should match EKS tag');
+    console.log('PASS: /version matches build manifest.');
+
+    console.log('8. Testing /metrics (Case study Prometheus endpoint)...');
+    const metricsTxt = await fetchText('http://localhost:4000/metrics');
+    assert(metricsTxt.includes('chronosai_cpu_utilization'), 'Metrics should expose CPU Load');
+    assert(metricsTxt.includes('chronosai_active_pods'), 'Metrics should expose Pod count');
+    console.log('PASS: /metrics exposes Prometheus metrics.');
+
+    console.log('9. Testing /api/jobs (Analytics jobs feed)...');
+    const jobs = await fetchJson('http://localhost:4000/api/jobs');
+    assert(typeof jobs.runningCount === 'number', 'Running count should be numerical');
+    assert(Array.isArray(jobs.jobs), 'Jobs list should be an array');
+    console.log('PASS: /api/jobs returns active job batches.');
+
+    console.log('10. Testing /api/alerts (Observability incidents stream)...');
+    const alerts = await fetchJson('http://localhost:4000/api/alerts');
+    assert(Array.isArray(alerts), 'Alerts list should be an array');
+    assert(alerts.length > 0, 'Alerts list should contain items');
+    console.log('PASS: /api/alerts returns DevOps logs.');
 
     console.log('ALL TESTS PASSED SUCCESSFULLY!');
     cleanup(0);
@@ -101,4 +133,30 @@ function cleanup(exitCode) {
   console.log('Shutting down test server...');
   server.kill();
   process.exit(exitCode);
+}
+
+function postJson(url) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const req = http.request({
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      path: parsedUrl.pathname,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          resolve({});
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(JSON.stringify({}));
+    req.end();
+  });
 }

@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="app.js" defer></script>
 </head>
 <body>
     <div class="glass-bg"></div>
@@ -24,11 +25,11 @@
                 </div>
             </div>
             <nav class="nav-links">
-                <a href="#" class="nav-item active"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
-                <a href="#simulations" class="nav-item"><i class="fa-solid fa-circle-nodes"></i> Chaos Sandbox</a>
-                <a href="#telemetry" class="nav-item"><i class="fa-solid fa-gauge-high"></i> Observability</a>
-                <a href="#security" class="nav-item"><i class="fa-solid fa-shield-halved"></i> Secrets & Vault</a>
-                <a href="#logs" class="nav-item"><i class="fa-solid fa-terminal"></i> Log Analytics</a>
+                <a href="#dashboard" class="nav-item active"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
+                <a href="#indicators" class="nav-item"><i class="fa-solid fa-globe"></i> Economic Indicators</a>
+                <a href="#jobs" class="nav-item"><i class="fa-solid fa-circle-nodes"></i> Analytics Jobs</a>
+                <a href="#alerts" class="nav-item"><i class="fa-solid fa-triangle-exclamation"></i> Alerts & Incidents</a>
+                <a href="#admin" class="nav-item"><i class="fa-solid fa-gears"></i> Administration</a>
             </nav>
             <div class="sidebar-footer">
                 <div class="status-indicator">
@@ -64,32 +65,263 @@
                 </div>
             </header>
 
-            <!-- Main Panel Grid -->
-            <div class="grid-container">
-                
-                <!-- Main Economic Forecasting Summary -->
-                <section class="card col-span-3 glass-card">
-                    <div class="card-header">
-                        <h2><i class="fa-solid fa-globe"></i> Macroeconomic Forecast Indices</h2>
-                        <span class="status-pill status-active">ML Engine Active</span>
+            <!-- 1. Dashboard Page -->
+            <div id="page-dashboard" class="page-view grid-container">
+                <!-- Dashboard Ingest & Jobs Stats Card Row -->
+                <div style="grid-column: span 3; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+                    <div class="forecast-cell">
+                        <div class="cell-title">Events Processed</div>
+                        <div class="cell-val" id="dash-events">843,202</div>
+                        <div class="cell-sub"><span>Throughput (JSON stdout)</span></div>
                     </div>
-                    <div class="forecasting-grid">
-                        <div class="forecast-metrics-wrapper" id="forecast-cards-container">
-                            <!-- Injected dynamically -->
+                    <div class="forecast-cell">
+                        <div class="cell-title">Active Analytics Jobs</div>
+                        <div class="cell-val" id="dash-active-jobs">2</div>
+                        <div class="cell-sub"><span>Scheduled batch workers</span></div>
+                    </div>
+                    <div class="forecast-cell">
+                        <div class="cell-title">Forecast Gen Status</div>
+                        <div class="cell-val" id="dash-forecast-status" style="color: var(--color-success)">OPTIMAL</div>
+                        <div class="cell-sub"><span>ML Engine Core Online</span></div>
+                    </div>
+                    <div class="forecast-cell">
+                        <div class="cell-title">System Health</div>
+                        <div class="cell-val" id="dash-system-health" style="color: var(--color-success)">HEALTHY</div>
+                        <div class="cell-sub"><span>EKS clusters optimal</span></div>
+                    </div>
+                </div>
+
+                <!-- Observability Panel (Prometheus & Grafana Gauges) -->
+                <section class="card col-span-2 glass-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-gauge-high"></i> Resource Observability (Prometheus)</h2>
+                        <a href="/metrics" target="_blank" class="card-link-btn"><i class="fa-solid fa-square-rss"></i> Scrape Endpoint</a>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-gauge">
+                            <canvas id="cpuGauge" style="max-height: 120px;"></canvas>
+                            <span class="gauge-label">CPU LOAD</span>
+                            <span class="gauge-val" id="cpu-text">0%</span>
                         </div>
-                        <div class="forecast-chart-container">
-                            <canvas id="gdpChart"></canvas>
+                        <div class="metric-gauge">
+                            <canvas id="ramGauge" style="max-height: 120px;"></canvas>
+                            <span class="gauge-label">RAM USAGE</span>
+                            <span class="gauge-val" id="ram-text">0%</span>
+                        </div>
+                        <div class="metric-stats">
+                            <div class="stat-row">
+                                <span>Request Rate:</span>
+                                <strong id="req-rate-text">420 rps</strong>
+                            </div>
+                            <div class="stat-row">
+                                <span>Error Rate:</span>
+                                <strong id="err-rate-text" class="highlight-green">0.01%</strong>
+                            </div>
+                            <div class="stat-row">
+                                <span>Database Latency:</span>
+                                <strong id="db-latency-text">4ms</strong>
+                            </div>
                         </div>
                     </div>
                 </section>
 
-                <!-- Chaos Sandbox: Crisis & Self-Healing Simulator -->
-                <section class="card col-span-2 glass-card" id="simulations">
+                <!-- Kubernetes Cluster / Pod Topology Visualizer -->
+                <section class="card col-span-1 glass-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-cubes"></i> K8s Cluster Pods</h2>
+                        <span class="value-badge" id="pod-count-badge">3 Pods</span>
+                    </div>
+                    <p class="card-desc">Active replica sets deployed in active region.</p>
+                    <div class="pod-grid" id="pod-visualizer">
+                        <!-- Dynamic pod states -->
+                    </div>
+                    <div class="pod-legend">
+                        <span class="legend-item"><span class="legend-dot green"></span> Running</span>
+                        <span class="legend-item"><span class="legend-dot yellow"></span> Scaling</span>
+                        <span class="legend-item"><span class="legend-dot red"></span> Failed</span>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 2. Economic Indicators Page -->
+            <div id="page-indicators" class="page-view grid-container hidden">
+                <section class="card col-span-3 glass-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-globe"></i> Global Macroeconomic Indicators</h2>
+                        <span class="status-pill status-active">Live Economic Feed</span>
+                    </div>
+                    <p class="card-desc">Macroeconomic parameters generated dynamically by forecasting algorithms and cached in PostgreSQL.</p>
+                    <div style="overflow-x: auto; margin-top: 10px;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary); font-weight: 600;">
+                                    <th style="padding: 12px 8px;">Country / Region</th>
+                                    <th style="padding: 12px 8px; text-align: right;">GDP Growth Rate</th>
+                                    <th style="padding: 12px 8px; text-align: right;">Inflation Rate (CPI)</th>
+                                    <th style="padding: 12px 8px; text-align: right;">Employment Rate</th>
+                                    <th style="padding: 12px 8px; text-align: right;">Trade Volume Index</th>
+                                    <th style="padding: 12px 8px; text-align: right;">Logistics Index</th>
+                                    <th style="padding: 12px 8px; text-align: center;">Model Accuracy</th>
+                                </tr>
+                            </thead>
+                            <tbody id="indicators-table-body">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="forecast-chart-container" style="margin-top: 28px;">
+                        <div style="font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 12px; text-transform: uppercase;">GDP Growth Forecasting Trends (Chart.js)</div>
+                        <canvas id="gdpChart"></canvas>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 3. Analytics Jobs Page -->
+            <div id="page-jobs" class="page-view grid-container hidden">
+                <div style="grid-column: span 3; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+                    <div class="forecast-cell">
+                        <div class="cell-title">Running Jobs</div>
+                        <div class="cell-val" id="jobs-running">2</div>
+                        <div class="cell-sub"><span>Executing threads</span></div>
+                    </div>
+                    <div class="forecast-cell">
+                        <div class="cell-title">Completed Jobs</div>
+                        <div class="cell-val" id="jobs-completed">124</div>
+                        <div class="cell-sub"><span>Successful batch runs</span></div>
+                    </div>
+                    <div class="forecast-cell">
+                        <div class="cell-title">Failed Jobs</div>
+                        <div class="cell-val" id="jobs-failed" style="color: var(--color-danger)">3</div>
+                        <div class="cell-sub"><span>Terminated anomalies</span></div>
+                    </div>
+                    <div class="forecast-cell">
+                        <div class="cell-title">Avg Processing Time</div>
+                        <div class="cell-val" id="jobs-avg-time">14.2s</div>
+                        <div class="cell-sub"><span>Latency SLA average</span></div>
+                    </div>
+                </div>
+
+                <section class="card col-span-3 glass-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-list-check"></i> Job Status Timeline</h2>
+                        <span class="status-pill status-active">Batch Scheduling Active</span>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary); font-weight: 600;">
+                                    <th style="padding: 12px 8px;">Job ID</th>
+                                    <th style="padding: 12px 8px;">Analysis Pipeline Target</th>
+                                    <th style="padding: 12px 8px;">Processing Status</th>
+                                    <th style="padding: 12px 8px; text-align: right;">SLA Duration</th>
+                                    <th style="padding: 12px 8px; text-align: right;">Trigger Timestamp</th>
+                                </tr>
+                            </thead>
+                            <tbody id="jobs-table-body">
+                                <!-- Dynamic jobs list -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 4. Alerts & Incidents Page -->
+            <div id="page-alerts" class="page-view grid-container hidden">
+                <section class="card col-span-3 glass-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-triangle-exclamation"></i> Alerts & Infrastructure Incidents</h2>
+                        <span class="status-pill green-pill" id="alerts-status-pill">No Active Alerts</span>
+                    </div>
+                    <p class="card-desc">Observability alerts triggered by threshold failures, K8s replica drops, or security anomalies.</p>
+                    <div style="overflow-x: auto; margin-top: 10px;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary); font-weight: 600;">
+                                    <th style="padding: 12px 8px;">Alert ID</th>
+                                    <th style="padding: 12px 8px;">Alert Type</th>
+                                    <th style="padding: 12px 8px;">Severity</th>
+                                    <th style="padding: 12px 8px;">Message details</th>
+                                    <th style="padding: 12px 8px; text-align: right;">Incident Time</th>
+                                    <th style="padding: 12px 8px; text-align: center;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alerts-table-body">
+                                <!-- Dynamic alerts log -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 5. Administration Page -->
+            <div id="page-admin" class="page-view grid-container hidden">
+                <!-- Metadata Stats Panel -->
+                <section class="card col-span-1 glass-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-circle-info"></i> Platform Parameters</h2>
+                    </div>
+                    <div class="vault-sec-details" style="gap: 12px;">
+                        <div class="vault-meta">
+                            <span>App Version:</span>
+                            <span class="highlight-green">v2.4.1</span>
+                        </div>
+                        <div class="vault-meta">
+                            <span>Build Number:</span>
+                            <span>#142</span>
+                        </div>
+                        <div class="vault-meta">
+                            <span>Environment:</span>
+                            <span>Production (EKS)</span>
+                        </div>
+                        <div class="vault-meta">
+                            <span>Active Region:</span>
+                            <span id="admin-active-region">us-east-1</span>
+                        </div>
+                        <div class="vault-meta">
+                            <span>Last Deployment:</span>
+                            <span>2026-06-18 12:00</span>
+                        </div>
+                        <div class="vault-meta">
+                            <span>Jenkins Pipeline:</span>
+                            <span class="status-pill green-pill">SUCCESS</span>
+                        </div>
+                        <div class="vault-meta">
+                            <span>Vault Connection:</span>
+                            <span class="status-pill green-pill" id="admin-vault-pill">Connected</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- HashiCorp Vault Key Management -->
+                <section class="card col-span-2 glass-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-key"></i> Vault Integration</h2>
+                        <span class="status-pill green-pill" id="vault-status-pill">Active</span>
+                    </div>
+                    <div class="vault-sec-details">
+                        <div class="vault-meta">
+                            <span>Status:</span>
+                            <span id="vault-status-text">UNSEALED (OPERATIONAL)</span>
+                        </div>
+                        <div class="vault-meta">
+                            <span>Auth Path:</span>
+                            <span>kubernetes/auth/login</span>
+                        </div>
+                        <div class="vault-secrets-box">
+                            <h5>Dynamic Secret Retrieved:</h5>
+                            <pre id="vault-secrets-view">Loading dynamic keys...</pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Chaos Sandbox Controls -->
+                <section class="card col-span-3 glass-card" id="simulations">
                     <div class="card-header">
                         <h2><i class="fa-solid fa-bug"></i> Chaos Engineering Sandbox</h2>
                         <span class="status-pill" id="chaos-state-badge">Idle</span>
                     </div>
-                    <p class="card-desc">Simulate global disruptions and observe the platform's autonomous Kubernetes self-healing and DevOps failure recovery in real-time.</p>
+                    <p class="card-desc">Simulate infrastructure disasters to observe EKS autoscaling, Vault auto-sealing, DNS failover routing, and recovery.</p>
                     
                     <div class="simulation-actions">
                         <button class="sim-btn" onclick="triggerCrisis('market_crash')">
@@ -122,7 +354,7 @@
                         </button>
                     </div>
 
-                    <!-- Visual Timeline of self-healing -->
+                    <!-- Visual Timeline -->
                     <div class="self-healing-timeline-wrapper">
                         <h4>Self-Healing Timeline Status</h4>
                         <div class="timeline-steps">
@@ -146,79 +378,6 @@
                     </div>
                 </section>
 
-                <!-- Kubernetes Cluster / Pod Topology Visualizer -->
-                <section class="card col-span-1 glass-card">
-                    <div class="card-header">
-                        <h2><i class="fa-solid fa-cubes"></i> K8s Cluster Pods</h2>
-                        <span class="value-badge" id="pod-count-badge">3 Pods</span>
-                    </div>
-                    <p class="card-desc">Active pod replicas deployed in region cluster.</p>
-                    <div class="pod-grid" id="pod-visualizer">
-                        <!-- Pods rendered dynamically -->
-                    </div>
-                    <div class="pod-legend">
-                        <span class="legend-item"><span class="legend-dot green"></span> Running</span>
-                        <span class="legend-item"><span class="legend-dot yellow"></span> Scaling</span>
-                        <span class="legend-item"><span class="legend-dot red"></span> Failed</span>
-                    </div>
-                </section>
-
-                <!-- Observability Panel (Prometheus & Grafana) -->
-                <section class="card col-span-2 glass-card" id="telemetry">
-                    <div class="card-header">
-                        <h2><i class="fa-solid fa-gauge-high"></i> Telemetry & Metrics (Prometheus)</h2>
-                        <a href="/api/sim-metrics" target="_blank" class="card-link-btn"><i class="fa-solid fa-square-rss"></i> Scrape Endpoint</a>
-                    </div>
-                    <div class="metrics-grid">
-                        <div class="metric-gauge">
-                            <canvas id="cpuGauge" style="max-height: 120px;"></canvas>
-                            <span class="gauge-label">CPU LOAD</span>
-                            <span class="gauge-val" id="cpu-text">0%</span>
-                        </div>
-                        <div class="metric-gauge">
-                            <canvas id="ramGauge" style="max-height: 120px;"></canvas>
-                            <span class="gauge-label">RAM USAGE</span>
-                            <span class="gauge-val" id="ram-text">0%</span>
-                        </div>
-                        <div class="metric-stats">
-                            <div class="stat-row">
-                                <span>Request Rate:</span>
-                                <strong id="req-rate-text">420 rps</strong>
-                            </div>
-                            <div class="stat-row">
-                                <span>Error Rate:</span>
-                                <strong id="err-rate-text" class="highlight-green">0.01%</strong>
-                            </div>
-                            <div class="stat-row">
-                                <span>Database Latency:</span>
-                                <strong id="db-latency-text">4ms</strong>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- HashiCorp Vault Key Management -->
-                <section class="card col-span-1 glass-card" id="security">
-                    <div class="card-header">
-                        <h2><i class="fa-solid fa-key"></i> Vault Integration</h2>
-                        <span class="status-pill green-pill" id="vault-status-pill">Active</span>
-                    </div>
-                    <div class="vault-sec-details">
-                        <div class="vault-meta">
-                            <span>Status:</span>
-                            <span id="vault-status-text">UNSEALED (OPERATIONAL)</span>
-                        </div>
-                        <div class="vault-meta">
-                            <span>Auth Engine:</span>
-                            <span>kubernetes/auth</span>
-                        </div>
-                        <div class="vault-secrets-box">
-                            <h5>Dynamic Secret Retrieved:</h5>
-                            <pre id="vault-secrets-view">Loading dynamic keys...</pre>
-                        </div>
-                    </div>
-                </section>
-
                 <!-- ELK Stack Real-time Log Stream -->
                 <section class="card col-span-3 glass-card" id="logs">
                     <div class="card-header">
@@ -237,7 +396,6 @@
                         </div>
                     </div>
                 </section>
-
             </div>
         </main>
     </div>

@@ -15,9 +15,73 @@ const MAX_HISTORY_POINTS = 10;
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
   initCharts();
+  initRouter();
   pollData();
   setInterval(pollData, 2000);
 });
+
+// SPA Hash Router
+function initRouter() {
+  window.addEventListener('hashchange', handleRoute);
+  // Initial route resolve
+  handleRoute();
+}
+
+function handleRoute() {
+  if (!window.location.hash) {
+    window.location.hash = '#dashboard';
+    return;
+  }
+  const hash = window.location.hash;
+  
+  const routes = {
+    '#dashboard': 'page-dashboard',
+    '#indicators': 'page-indicators',
+    '#jobs': 'page-jobs',
+    '#alerts': 'page-alerts',
+    '#admin': 'page-admin'
+  };
+
+  const targetPageId = routes[hash] || 'page-dashboard';
+
+  // Toggle page visibility
+  document.querySelectorAll('.page-view').forEach(page => {
+    if (page.id === targetPageId) {
+      page.classList.remove('hidden');
+    } else {
+      page.classList.add('hidden');
+    }
+  });
+
+  // Update active navigation items
+  document.querySelectorAll('.nav-links .nav-item').forEach(link => {
+    const linkHash = link.getAttribute('href');
+    if (linkHash === hash || (hash === '#dashboard' && linkHash === '#dashboard')) {
+      link.classList.add('active');
+    } else {
+      link.classList.remove('active');
+    }
+  });
+
+  // Handle Chart.js resizing/redrawing when components become visible
+  setTimeout(() => {
+    if (hash === '#dashboard') {
+      if (cpuGaugeInstance) {
+        cpuGaugeInstance.resize();
+        cpuGaugeInstance.update('none');
+      }
+      if (ramGaugeInstance) {
+        ramGaugeInstance.resize();
+        ramGaugeInstance.update('none');
+      }
+    } else if (hash === '#indicators') {
+      if (gdpChartInstance) {
+        gdpChartInstance.resize();
+        gdpChartInstance.update('none');
+      }
+    }
+  }, 50);
+}
 
 // Initialize Chart.js graphs
 function initCharts() {
@@ -120,12 +184,16 @@ async function pollData() {
     const forecastPromise = fetch('/api/forecast').then(r => r.ok ? r.json() : null).catch(() => null);
     const logsPromise = fetch('/api/sim-logs').then(r => r.ok ? r.json() : null).catch(() => null);
     const secretsPromise = fetch('/api/sim-secrets').catch(() => null);
+    const jobsPromise = fetch('/api/jobs').then(r => r.ok ? r.json() : null).catch(() => null);
+    const alertsPromise = fetch('/api/alerts').then(r => r.ok ? r.json() : null).catch(() => null);
 
-    const [state, forecast, logs, secretsRes] = await Promise.all([
+    const [state, forecast, logs, secretsRes, jobs, alerts] = await Promise.all([
       statePromise,
       forecastPromise,
       logsPromise,
-      secretsPromise
+      secretsPromise,
+      jobsPromise,
+      alertsPromise
     ]);
 
     if (state) {
@@ -134,7 +202,7 @@ async function pollData() {
       updateSelfHealingTimeline(state);
     }
     if (forecast) {
-      updateForecastCards(forecast);
+      updateIndicatorsTable(forecast);
       updateEconomicChart(forecast);
     }
     if (logs) {
@@ -142,6 +210,12 @@ async function pollData() {
     }
     if (secretsRes) {
       updateVaultView(secretsRes);
+    }
+    if (jobs) {
+      updateJobsTab(jobs);
+    }
+    if (alerts) {
+      updateAlertsTab(alerts);
     }
   } catch (error) {
     console.error('Error polling dashboard datasets:', error);
@@ -161,6 +235,29 @@ function updateSystemMetrics(state) {
   document.getElementById('req-rate-text').textContent = `${state.requestRate} rps`;
   document.getElementById('err-rate-text').textContent = `${state.errorRate}%`;
   document.getElementById('db-latency-text').textContent = `${state.dbLatency}ms`;
+
+  // Dashboard page specific elements
+  const dashEvents = document.getElementById('dash-events');
+  const dashForecastStatus = document.getElementById('dash-forecast-status');
+  const dashSystemHealth = document.getElementById('dash-system-health');
+  if (dashEvents) dashEvents.textContent = state.totalRequests.toLocaleString();
+  if (dashForecastStatus) {
+    dashForecastStatus.textContent = state.status === 'OPTIMAL' ? 'OPTIMAL' : 'DEGRADED';
+    dashForecastStatus.style.color = state.status === 'OPTIMAL' ? 'var(--color-success)' : 'var(--color-danger)';
+  }
+  if (dashSystemHealth) {
+    dashSystemHealth.textContent = state.status;
+    dashSystemHealth.style.color = state.status === 'OPTIMAL' ? 'var(--color-success)' : 'var(--color-warning)';
+  }
+
+  // Admin page active region / Vault
+  const adminActiveRegion = document.getElementById('admin-active-region');
+  const adminVaultPill = document.getElementById('admin-vault-pill');
+  if (adminActiveRegion) adminActiveRegion.textContent = state.activeRegion;
+  if (adminVaultPill) {
+    adminVaultPill.textContent = state.vaultStatus === 'CONNECTED' ? 'Connected' : state.vaultStatus;
+    adminVaultPill.className = state.vaultStatus === 'CONNECTED' ? 'status-pill green-pill' : 'status-pill red-pill';
+  }
 
   const errText = document.getElementById('err-rate-text');
   if (state.errorRate > 5.0) {
@@ -198,32 +295,121 @@ function updateSystemMetrics(state) {
   }
 }
 
-// Update economic cards
-function updateForecastCards(forecast) {
-  const container = document.getElementById('forecast-cards-container');
-  container.innerHTML = '';
+// Update indicators table
+function updateIndicatorsTable(forecast) {
+  const tbody = document.getElementById('indicators-table-body');
+  if (!tbody) return;
+  tbody.innerHTML = '';
 
   forecast.regions.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border-color)';
+    
     let riskClass = 'low';
     if (r.riskIndex > 60) riskClass = 'high';
     else if (r.riskIndex > 30) riskClass = 'medium';
 
-    const cell = document.createElement('div');
-    cell.className = 'forecast-cell';
-    cell.innerHTML = `
-      <div class="cell-title">${r.name}</div>
-      <div class="cell-val">${r.gdpGrowth > 0 ? '+' : ''}${r.gdpGrowth}% <span style="font-size:12px; font-weight:normal; color:#64748B">GDP</span></div>
-      <div class="cell-sub">
-        <span>Inflation: <strong>${r.cpiInflation}%</strong></span>
-        <span>Risk: <strong class="risk-level ${riskClass}">${r.riskIndex}</strong></span>
-      </div>
-      <div class="cell-sub" style="margin-top:4px; font-size:10px;">
-        <span>Logistics: ${r.logisticsScore}/100</span>
-        <span style="color: ${r.forecastingModelStatus === 'OPTIMAL' ? '#10B981' : '#F43F5E'}">${r.forecastingModelStatus}</span>
-      </div>
+    const employmentRate = (100 - r.unemployment).toFixed(1);
+    const tradeVolume = Math.floor(120 + r.gdpGrowth * 15 - r.riskIndex * 0.5);
+
+    tr.innerHTML = `
+      <td style="padding: 12px 8px; font-weight: 600;">${r.name}</td>
+      <td style="padding: 12px 8px; text-align: right; font-weight: 700; color: ${r.gdpGrowth > 0 ? 'var(--color-success)' : 'var(--color-danger)'}">${r.gdpGrowth > 0 ? '+' : ''}${r.gdpGrowth}%</td>
+      <td style="padding: 12px 8px; text-align: right;">${r.cpiInflation}%</td>
+      <td style="padding: 12px 8px; text-align: right;">${employmentRate}%</td>
+      <td style="padding: 12px 8px; text-align: right; font-weight: 600;">${tradeVolume}</td>
+      <td style="padding: 12px 8px; text-align: right;">${r.logisticsScore}</td>
+      <td style="padding: 12px 8px; text-align: center;">
+        <span class="status-pill ${r.forecastingModelStatus === 'OPTIMAL' ? 'status-active' : 'red-pill'}">${r.forecastingModelStatus}</span>
+      </td>
     `;
-    container.appendChild(cell);
+    tbody.appendChild(tr);
   });
+}
+
+// Update Jobs Tab
+function updateJobsTab(data) {
+  const runEl = document.getElementById('jobs-running');
+  const compEl = document.getElementById('jobs-completed');
+  const failEl = document.getElementById('jobs-failed');
+  const avgEl = document.getElementById('jobs-avg-time');
+  const dashActiveJobs = document.getElementById('dash-active-jobs');
+  const tbody = document.getElementById('jobs-table-body');
+
+  if (runEl) runEl.textContent = data.runningCount;
+  if (dashActiveJobs) dashActiveJobs.textContent = data.runningCount;
+  if (compEl) compEl.textContent = data.completedCount;
+  if (failEl) failEl.textContent = data.failedCount;
+  if (avgEl) avgEl.textContent = `${data.avgProcessingTime}s`;
+
+  if (tbody) {
+    tbody.innerHTML = '';
+    data.jobs.forEach(j => {
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid var(--border-color)';
+      
+      let statusClass = 'status-active';
+      if (j.status === 'FAILED') statusClass = 'red-pill';
+      else if (j.status === 'RUNNING') statusClass = 'green-pill';
+
+      tr.innerHTML = `
+        <td style="padding: 12px 8px; font-family: monospace; font-weight: 600;">${j.id}</td>
+        <td style="padding: 12px 8px; font-weight: 500;">${j.name}</td>
+        <td style="padding: 12px 8px;">
+          <span class="status-pill ${statusClass}">${j.status}</span>
+        </td>
+        <td style="padding: 12px 8px; text-align: right; font-weight: 600;">${j.duration}</td>
+        <td style="padding: 12px 8px; text-align: right; color: var(--text-secondary);">${new Date(j.timestamp).toLocaleTimeString()}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+}
+
+// Update Alerts Tab
+function updateAlertsTab(alerts) {
+  const statusPill = document.getElementById('alerts-status-pill');
+  const tbody = document.getElementById('alerts-table-body');
+
+  const activeAlerts = alerts.filter(a => a.status === 'ACTIVE');
+  if (statusPill) {
+    if (activeAlerts.length > 0) {
+      statusPill.textContent = `${activeAlerts.length} Active Alert(s)`;
+      statusPill.className = 'status-pill red-pill';
+    } else {
+      statusPill.textContent = 'System Optimal';
+      statusPill.className = 'status-pill green-pill';
+    }
+  }
+
+  if (tbody) {
+    tbody.innerHTML = '';
+    alerts.forEach(a => {
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid var(--border-color)';
+      
+      let severityClass = 'status-active';
+      if (a.severity === 'CRITICAL') severityClass = 'red-pill';
+      else if (a.severity === 'WARNING') severityClass = 'status-pill';
+
+      let statusClass = 'green-pill';
+      if (a.status === 'ACTIVE') statusClass = 'red-pill';
+
+      tr.innerHTML = `
+        <td style="padding: 12px 8px; font-family: monospace;">${a.id}</td>
+        <td style="padding: 12px 8px; font-weight: 600;">${a.type}</td>
+        <td style="padding: 12px 8px;">
+          <span class="status-pill ${severityClass}">${a.severity}</span>
+        </td>
+        <td style="padding: 12px 8px; font-weight: 500;">${a.message}</td>
+        <td style="padding: 12px 8px; text-align: right; color: var(--text-secondary);">${new Date(a.timestamp).toLocaleTimeString()}</td>
+        <td style="padding: 12px 8px; text-align: center;">
+          <span class="status-pill ${statusClass}">${a.status}</span>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
 }
 
 // Append data to moving Chart.js Economic Trends chart
@@ -278,6 +464,7 @@ function updateK8sPods(state) {
       stateIcon = 'fa-solid fa-spinner';
     } else {
       // Running normal
+      pod.classList.add('running');
     }
 
     pod.innerHTML = `
