@@ -95,6 +95,7 @@ jobs:
           kubectl apply -f kubernetes/service.yaml -n chronosai
           kubectl apply -f kubernetes/ingress.yaml -n chronosai
           kubectl apply -f kubernetes/hpa.yaml -n chronosai
+          kubectl apply -f kubernetes/servicemonitor.yaml -n chronosai
 
       - name: Verify Workloads Rollout Status
         run: |

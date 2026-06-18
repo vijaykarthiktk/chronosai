@@ -130,9 +130,10 @@ In production, Vault is deployed using Helm and configured with the Kubernetes a
     ```yaml
     image: ghcr.io/<github_username_lowercase>/chronosai-analytics:latest
     ```
-2.  Deploy the ConfigMap, Application, Service, Ingress, and Horizontal Pod Autoscaler (HPA):
+2.  Deploy the ConfigMap, ServiceMonitor, Application, Service, Ingress, and Horizontal Pod Autoscaler (HPA):
     ```bash
     kubectl apply -f kubernetes/configmap.yaml -n chronosai
+    kubectl apply -f kubernetes/servicemonitor.yaml -n chronosai
     kubectl apply -f kubernetes/deployment.yaml -n chronosai
     kubectl apply -f kubernetes/service.yaml -n chronosai
     kubectl apply -f kubernetes/ingress.yaml -n chronosai
@@ -178,7 +179,8 @@ Navigate to your GitHub repository settings under **Settings > Secrets and varia
 *   **Automatic Trigger**: The workflow executes automatically on every `git push` to the `main` branch.
 *   **Manual Trigger**: You can run the pipeline manually by navigating to the **Actions** tab in your GitHub repository, selecting **ChronosAI CI/CD - EKS Deployment**, and clicking **Run workflow**.
 
-### 3. Pipeline Actions Workflow
-1.  **Job 1 (IaC)**: Configures credentials, sets up Terraform, and executes `terraform apply` to ensure the EKS cluster and active node groups match state.
-2.  **Job 2 (Build & Deploy)**: Builds the Docker image, tags it with the unique git commit SHA, pushes the image to GitHub Container Registry (GHCR), logs in to EKS, creates namespaces/secrets, injects GHCR image tags, deploys manifests to Kubernetes, and monitors rollout status.
+### 3. Pipeline Actions Workflow (Parallel Architecture)
+1.  **Job 1 (IaC - `provision-infrastructure`)**: Configures credentials, sets up Terraform, and executes `terraform apply` to ensure the EKS cluster network, master control plane, and EC2 node groups match the target state.
+2.  **Job 2 (Build & Push - `build-and-push`)**: Logs in to GHCR, builds the production Docker container, and pushes the unique commit tag and `latest` tags to GHCR in **parallel** with Job 1 to save execution time.
+3.  **Job 3 (Kubernetes Deploy - `kubernetes-deploy`)**: Runs after both Job 1 and Job 2 complete successfully. Logs in to the newly provisioned EKS cluster, configures namespaces/secrets, injects the new image URL, deploys database and application resources, and monitors rollout statuses.
 

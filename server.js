@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Fallback in-memory state if DB connection fails completely
+// Global state representation (runs in memory as fallback, mirrors database if connected)
 let systemState = {
   status: "OPTIMAL",
   crisisType: null,
@@ -17,8 +17,8 @@ let systemState = {
   ramUsage: 27.5,
   requestRate: 420,
   errorRate: 0.01,
-  dbStatus: "CONNECTED",
-  vaultStatus: "CONNECTED",
+  dbStatus: "DISCONNECTED",
+  vaultStatus: "DISCONNECTED",
   primaryRegion: "us-east-1",
   failoverRegion: "eu-west-1",
   activeRegion: "us-east-1",
@@ -30,9 +30,13 @@ let systemState = {
 
 // Database connection pool reference
 let dbPool = null;
+let isInitializing = false;
 
-// Initialize Database connection parameters
+// Self-healing startup initialization with automatic reconnect retries
 async function initializeApp() {
+  if (isInitializing) return;
+  isInitializing = true;
+
   const vaultAddr = process.env.VAULT_ADDR || 'http://127.0.0.1:8200';
   const vaultToken = process.env.VAULT_TOKEN || 'myroottoken';
   
@@ -41,7 +45,7 @@ async function initializeApp() {
   const dbHost = process.env.DB_HOST || '127.0.0.1';
   const dbName = process.env.DB_NAME || 'chronosai_forecasting';
 
-  console.log(`Connecting to HashiCorp Vault at: ${vaultAddr}...`);
+  console.log(`[Self-Healing] Querying Vault credentials at: ${vaultAddr}...`);
   try {
     const vaultRes = await fetch(`${vaultAddr}/v1/secret/data/chronosai/database`, {
       method: 'GET',
@@ -54,35 +58,35 @@ async function initializeApp() {
         dbUser = data.data.data.db_username || dbUser;
         dbPassword = data.data.data.db_password || dbPassword;
         systemState.vaultStatus = "CONNECTED";
-        console.log("Vault secret retrieval: SUCCESS");
+        console.log("[Self-Healing] Vault connection: OPERATIONAL");
       }
     } else {
-      console.warn(`Vault returned status ${vaultRes.status}. Using default credentials.`);
+      console.warn(`[Self-Healing] Vault returned status ${vaultRes.status}. Using fallback credentials.`);
       systemState.vaultStatus = "SEALED";
     }
   } catch (err) {
-    console.warn(`Failed to connect to Vault (${err.message}). Using fallback environment credentials.`);
+    console.warn(`[Self-Healing] Vault connection failed (${err.message}). Retrying in 10s...`);
     systemState.vaultStatus = "DISCONNECTED";
   }
 
-  // Create PostgreSQL pool
-  console.log(`Connecting to PostgreSQL Database at: ${dbHost}:5432...`);
-  dbPool = new Pool({
+  // PostgreSQL pool initialization
+  console.log(`[Self-Healing] Connecting to PostgreSQL at: ${dbHost}:5432...`);
+  const pool = new Pool({
     user: dbUser,
     password: dbPassword,
     host: dbHost,
     database: dbName,
     port: 5432,
-    connectionTimeoutMillis: 4000
+    connectionTimeoutMillis: 3000
   });
 
-  // Verify and seed database schemas
   try {
-    const client = await dbPool.connect();
-    console.log("PostgreSQL connection pool: ESTABLISHED");
+    const client = await pool.connect();
+    console.log("[Self-Healing] PostgreSQL connection pool: ESTABLISHED");
     systemState.dbStatus = "CONNECTED";
+    dbPool = pool;
 
-    // Create tables
+    // Run database schemas provisioning
     await client.query(`
       CREATE TABLE IF NOT EXISTS system_state (
         id INT PRIMARY KEY,
@@ -125,7 +129,7 @@ async function initializeApp() {
       )
     `);
 
-    // Seed initial records if empty
+    // Seed data
     const stateCount = await client.query(`SELECT COUNT(*) FROM system_state`);
     if (parseInt(stateCount.rows[0].count) === 0) {
       await client.query(`
@@ -158,21 +162,29 @@ async function initializeApp() {
     }
 
     client.release();
+    isInitializing = false;
   } catch (err) {
-    console.warn(`PostgreSQL initialization failed (${err.message}). Defaulting to internal memory store.`);
+    console.warn(`[Self-Healing] PostgreSQL connection failed (${err.message}). Retrying in 10s...`);
     systemState.dbStatus = "DISCONNECTED";
     dbPool = null;
+    pool.end();
+    isInitializing = false;
+    // Schedule retry loop
+    setTimeout(initializeApp, 10000);
   }
 }
 
-// Helpers to write logs and fetch state
+// Helpers to query active database state
 async function queryState() {
-  if (!dbPool) return systemState;
+  // If connection is lost, try to reinitialize
+  if (!dbPool) {
+    initializeApp();
+    return systemState;
+  }
   try {
     const res = await dbPool.query(`SELECT * FROM system_state WHERE id = 1`);
     if (res.rows.length > 0) {
       const dbRow = res.rows[0];
-      // Map database row keys back to camelCase object
       systemState = {
         status: dbRow.status,
         crisisType: dbRow.crisis_type,
@@ -193,7 +205,10 @@ async function queryState() {
       };
     }
   } catch (err) {
-    console.error("Failed to query system state from DB:", err.message);
+    console.error("[Self-Healing] Lost PG connection. Falling back to memory.", err.message);
+    systemState.dbStatus = "DISCONNECTED";
+    dbPool = null;
+    initializeApp(); // Schedule reconnect immediately
   }
   return systemState;
 }
@@ -216,7 +231,9 @@ async function updateState(newState) {
       systemState.totalRequests, systemState.totalErrors
     ]);
   } catch (err) {
-    console.error("Failed to update system state in DB:", err.message);
+    console.error("[Self-Healing] Failed to update DB state:", err.message);
+    systemState.dbStatus = "DISCONNECTED";
+    dbPool = null;
   }
 }
 
@@ -229,7 +246,9 @@ async function addLog(level, message, component) {
       VALUES ($1, $2, $3)
     `, [level, message, component]);
   } catch (err) {
-    console.error("Failed to write log to database:", err.message);
+    console.error("[Self-Healing] Failed to log to DB:", err.message);
+    systemState.dbStatus = "DISCONNECTED";
+    dbPool = null;
   }
 }
 
@@ -384,7 +403,7 @@ app.get('/api/sim-secrets', (req, res) => {
       fetched_at: new Date().toISOString(),
       keys: ["db_username", "db_password_hash", "jwt_signing_key"],
       data: {
-        db_username: "chronos_readwrite_user",
+        db_username: "postgres",
         jwt_signing_key: "HS256-vault-managed-token-key-********"
       }
     });
@@ -421,7 +440,6 @@ app.post('/api/crisis', async (req, res) => {
     await addLog("ERROR", "Global Economic Event: Market Crash detected. Critical analytical request surge.", "gateway");
     await addLog("WARNING", "CPU utilization exceeded threshold (80%). Triggering scaling request.", "orchestrator");
 
-    // Self-healing pipeline timeouts updating DB states
     setTimeout(async () => {
       const curState = await queryState();
       curState.status = "AUTOSCALING";

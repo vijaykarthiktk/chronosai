@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: chronosai-servicemonitor
+  namespace: chronosai
+  labels:
+    app: chronosai
+    release: prometheus # Ties to standard Helm-deployed Prometheus Operators
+spec:
+  selector:
+    matchLabels:
+      app: chronosai
+  endpoints:
+  - port: http
+    path: /api/sim-metrics
+    interval: 5s
+    scrapeTimeout: 4s
