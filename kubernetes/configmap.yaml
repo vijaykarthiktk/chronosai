@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chronosai-config
+  namespace: chronosai
+  labels:
+    app: chronosai
+    tier: analytics
+data:
+  DB_HOST: "chronosai-postgres-aurora.cluster-prod.us-east-1.rds.amazonaws.com"
+  DB_NAME: "chronosai_forecasting"
+  LOG_LEVEL: "info"
+  VAULT_KEY_PATH: "secret/data/chronosai/database"
+  DEFAULT_REGION: "us-east-1"
+  PROMETHEUS_METRICS_PATH: "/api/sim-metrics"

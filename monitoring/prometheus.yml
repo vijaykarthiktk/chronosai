@@ -1,0 +1,19 @@
+global:
+  scrape_interval:     5s # High-resolution scraping for forecasting crisis simulations
+  evaluation_interval: 5s
+
+scrape_configs:
+  # ChronosAI Core Analytics metrics scraper
+  - job_name: 'chronosai-analytics'
+    metrics_path: '/api/sim-metrics'
+    static_configs:
+      - targets: ['chronosai-app:3000'] # Resolves to app container in docker-compose network
+        labels:
+          environment: 'production'
+          tier: 'analytics'
+          cluster: 'eks-chronosai-prod'
+
+  # Prometheus self-monitoring metrics scraper
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

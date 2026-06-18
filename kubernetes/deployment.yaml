@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chronosai-deployment
+  namespace: chronosai
+  labels:
+    app: chronosai
+    tier: analytics
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: chronosai
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: chronosai
+        tier: analytics
+    spec:
+      containers:
+      - name: chronosai-container
+        image: chronosai-analytics:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+          name: http
+        
+        # Resource allocations for scheduling and scaling
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "512Mi"
+
+        # Environment mappings
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: chronosai-db-secrets
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chronosai-db-secrets
+              key: password
+        envFrom:
+        - configMapRef:
+            name: chronosai-config
+
+        # Health probes for self-healing pod management
+        livenessProbe:
+          httpGet:
+            path: /api/state
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/state
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 2
+
+        # Pod Security Context details
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL

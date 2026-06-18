@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  # ChronosAI Primary Forecasting App
+  chronosai-app:
+    build: .
+    image: chronosai-analytics:latest
+    container_name: chronosai-app
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=myroottoken
+      - DB_HOST=chronosai-db
+      - DB_NAME=chronosai_forecasting
+    depends_on:
+      - vault
+      - chronosai-db
+      - prometheus
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # PostgreSQL Database Instance - Economic Intelligence Tier
+  chronosai-db:
+    image: postgres:15-alpine
+    container_name: chronosai-db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=chronosai_forecasting
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=SuperSecurePassword123
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: always
+
+  # HashiCorp Vault - Secret Management
+  vault:
+    image: hashicorp/vault:1.15.0
+    container_name: chronosai-vault
+    ports:
+      - "8200:8200"
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=myroottoken
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ./vault/config.hcl:/vault/config/config.hcl
+    command: server -dev
+    restart: always
+
+  # Prometheus - Infrastructure Monitoring
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: chronosai-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    restart: always
+
+  # Grafana - Metrics Dashboards
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: chronosai-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    restart: always
+
+  # Elasticsearch - ELK Logs Database
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+    container_name: chronosai-elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    restart: always
+
+  # Logstash - ELK Parsing Ingestion Pipeline
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.17.10
+    container_name: chronosai-logstash
+    ports:
+      - "5044:5044"
+      - "5000:5000/udp"
+    volumes:
+      - ./monitoring/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx256m"
+    depends_on:
+      - elasticsearch
+    restart: always
+
+  # Kibana - ELK Logging Dashboard Visualizer
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.10
+    container_name: chronosai-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    restart: always
+
+volumes:
+  db_data:
