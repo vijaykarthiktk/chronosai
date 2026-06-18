@@ -249,7 +249,7 @@ resource "aws_iam_role" "ecs_task_role" {
 # ==========================================
 
 resource "aws_db_subnet_group" "db_subnet_group" {
-  name       = "chronosai-db-subnet-group"
+  name       = "chronosai-db-subnet-group-${random_string.role_suffix.result}"
   subnet_ids = aws_subnet.private_subnet[*].id
 
   tags = {
@@ -259,7 +259,7 @@ resource "aws_db_subnet_group" "db_subnet_group" {
 }
 
 resource "aws_db_instance" "postgres" {
-  identifier            = "chronosai-db"
+  identifier            = "chronosai-db-${random_string.role_suffix.result}"
   engine                = "postgres"
   engine_version        = "15"
   instance_class        = "db.t3.micro"
@@ -288,7 +288,7 @@ resource "aws_db_instance" "postgres" {
 # ==========================================
 
 resource "aws_lb" "chronos_alb" {
-  name               = "chronosai-alb"
+  name               = "chronosai-alb-${random_string.role_suffix.result}"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
@@ -301,7 +301,7 @@ resource "aws_lb" "chronos_alb" {
 }
 
 resource "aws_lb_target_group" "chronos_tg" {
-  name        = "chronosai-tg"
+  name        = "chronosai-tg-${random_string.role_suffix.result}"
   port        = 3000
   protocol    = "HTTP"
   vpc_id      = aws_vpc.chronos_vpc.id
@@ -340,7 +340,7 @@ resource "aws_lb_listener" "http_listener" {
 
 # ECS Log Group for CloudWatch Telemetry
 resource "aws_cloudwatch_log_group" "ecs_log_group" {
-  name              = "/ecs/chronosai-app"
+  name              = "/ecs/chronosai-app-${random_string.role_suffix.result}"
   retention_in_days = 7
 
   tags = {
