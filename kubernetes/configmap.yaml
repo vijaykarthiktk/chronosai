@@ -7,7 +7,7 @@ metadata:
     app: chronosai
     tier: analytics
 data:
-  DB_HOST: "chronosai-postgres-aurora.cluster-prod.us-east-1.rds.amazonaws.com"
+  DB_HOST: "chronosai-db"
   DB_NAME: "chronosai_forecasting"
   LOG_LEVEL: "info"
   VAULT_KEY_PATH: "secret/data/chronosai/database"
