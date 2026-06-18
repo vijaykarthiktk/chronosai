@@ -77,6 +77,34 @@ jobs:
             --from-literal=password="SuperSecurePassword123" \
             --namespace chronosai --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Deploy & Configure HashiCorp Vault on EKS
+        run: |
+          # Add the HashiCorp Helm repository
+          helm repo add hashicorp https://helm.releases.hashicorp.com
+          helm repo update
+          
+          # Install Vault in dev mode on EKS (namespace: chronosai)
+          helm upgrade --install vault hashicorp/vault \
+            --set "server.dev.enabled=true" \
+            --set "server.dev.token=myroottoken" \
+            -n chronosai
+          
+          # Wait for Vault pod to be ready
+          kubectl wait --for=condition=Ready pod/vault-0 -n chronosai --timeout=150s
+          
+          # Execute bootstrap script inside the EKS Vault container to populate secrets
+          kubectl exec vault-0 -n chronosai -- /bin/sh -c '
+            export VAULT_ADDR="http://127.0.0.1:8200"
+            vault login token="myroottoken"
+            if ! vault secrets list | grep -q "^secret/"; then
+              vault secrets enable -path=secret kv-v2
+            fi
+            vault kv put secret/chronosai/database \
+              db_username="postgres" \
+              db_password="SuperSecurePassword123" \
+              jwt_signing_key="HS256-vault-managed-token-key-chronosai-platform-2026"
+          '
+
       - name: Deploy Workloads to EKS Cluster
         env:
           IMAGE_TAG: ${{ github.sha }}

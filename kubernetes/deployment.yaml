@@ -47,6 +47,10 @@ spec:
         env:
         - name: NODE_ENV
           value: "production"
+        - name: VAULT_ADDR
+          value: "http://vault:8200"
+        - name: VAULT_TOKEN
+          value: "myroottoken"
         - name: DB_USER
           valueFrom:
             secretKeyRef:
