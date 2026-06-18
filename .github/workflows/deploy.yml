@@ -104,5 +104,10 @@ jobs:
 
       - name: Verify Workloads Rollout Status
         run: |
+          echo "=== Active Pods ==="
+          kubectl get pods -n chronosai
+          echo "=== LoadBalancer Service URL ==="
+          kubectl get service chronosai-service -n chronosai
+          echo "=== Deploying Rollout Checks ==="
           kubectl rollout status deployment/chronosai-postgres-deployment -n chronosai --timeout=120s
           kubectl rollout status deployment/chronosai-deployment -n chronosai --timeout=180s
