@@ -204,7 +204,7 @@ resource "aws_security_group" "eks_cluster_sg" {
 resource "aws_eks_cluster" "chronosai_eks" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_cluster_role.arn
-  version  = "1.28"
+  version  = "1.30"
 
   vpc_config {
     security_group_ids      = [aws_security_group.eks_cluster_sg.id]
