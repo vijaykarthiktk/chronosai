@@ -10,6 +10,10 @@ env:
   AWS_REGION: "us-east-1"
   EKS_CLUSTER_NAME: "chronosai-production-cluster"
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   # Job 1: Infrastructure Provisioning via Terraform
   provision-infrastructure:
