@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # Allows manual trigger from the Actions tab
 
 env:
-  AWS_REGION: "us-east-1"
+  AWS_REGION: "us-east-2"
   EKS_CLUSTER_NAME: "chronosai-production-cluster"
 
 permissions:

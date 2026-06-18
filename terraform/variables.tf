@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "Target deployment region for ChronosAI High Availability Cluster"
   type        = string
-  default     = "us-east-1"
+  default     = "us-east-2"
 }
 
 variable "vpc_cidr" {
