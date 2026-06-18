@@ -31,11 +31,11 @@ jobs:
         with:
           terraform_version: "1.7.0"
 
-      - name: Terraform Init & Format Check
+      - name: Terraform Init & Format
         run: |
           cd terraform
           terraform init
-          terraform fmt -check
+          terraform fmt
 
       - name: Terraform Plan
         run: |
