@@ -15,41 +15,6 @@ permissions:
   packages: write
 
 jobs:
-  # Job 1: Infrastructure Provisioning via Terraform (Independent Job)
-  provision-infrastructure:
-    name: Provision AWS EKS (IaC)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.7.0"
-
-      - name: Terraform Init & Format
-        run: |
-          cd terraform
-          terraform init
-          terraform fmt
-
-      - name: Terraform Plan
-        run: |
-          cd terraform
-          terraform plan
-
-      - name: Terraform Apply
-        run: |
-          cd terraform
-          terraform apply -auto-approve
 
   # Job 2: Build App Image & Push to GHCR (Independent Job running in PARALLEL)
   build-and-push:
@@ -81,10 +46,10 @@ jobs:
           docker push $IMAGE_NAME:$IMAGE_TAG
           docker push $IMAGE_NAME:latest
 
-  # Job 3: Kubernetes Deploy (Dependent Job: runs after EKS is ready & Docker image is pushed)
+  # Job 3: Kubernetes Deploy (Dependent Job: runs after Docker image is pushed to GHCR)
   kubernetes-deploy:
     name: Deploy Workloads to EKS
-    needs: [provision-infrastructure, build-and-push]
+    needs: [build-and-push]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
