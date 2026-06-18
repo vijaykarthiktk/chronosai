@@ -15,7 +15,7 @@ permissions:
   packages: write
 
 jobs:
-  # Job 1: Infrastructure Provisioning via Terraform
+  # Job 1: Infrastructure Provisioning via Terraform (Independent Job)
   provision-infrastructure:
     name: Provision AWS EKS (IaC)
     runs-on: ubuntu-latest
@@ -46,28 +46,18 @@ jobs:
           cd terraform
           terraform plan
 
-      # Optional: Auto-apply on push to main branch.
-      # Ensure you have set up S3 backend bucket to maintain Terraform state files.
       - name: Terraform Apply
         run: |
           cd terraform
           terraform apply -auto-approve
 
-  # Job 2: Build App Image, Push to ECR, and Rollout to EKS
-  build-and-deploy:
-    name: Build, Push, & Deploy to EKS
-    needs: provision-infrastructure
+  # Job 2: Build App Image & Push to GHCR (Independent Job running in PARALLEL)
+  build-and-push:
+    name: Build & Push Container to GHCR
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to GitHub Container Registry (GHCR)
         uses: docker/login-action@v3
@@ -90,8 +80,22 @@ jobs:
           # Push image tags to GHCR
           docker push $IMAGE_NAME:$IMAGE_TAG
           docker push $IMAGE_NAME:latest
-          
-          echo "IMAGE_URL=$IMAGE_NAME:$IMAGE_TAG" >> $GITHUB_ENV
+
+  # Job 3: Kubernetes Deploy (Dependent Job: runs after EKS is ready & Docker image is pushed)
+  kubernetes-deploy:
+    name: Deploy Workloads to EKS
+    needs: [provision-infrastructure, build-and-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Configure Kubectl context for EKS
         run: |
