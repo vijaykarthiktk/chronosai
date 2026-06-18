@@ -842,7 +842,7 @@ app.get('/version', (req, res) => {
   res.json({
     version: "2.4.1",
     buildNumber: "142",
-    environment: "Production (ECS)",
+    environment: "Production (EKS)",
     pipelineStatus: "SUCCESS",
     lastDeploymentTime: "2026-06-18T12:00:00Z"
   });

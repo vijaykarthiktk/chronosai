@@ -10,26 +10,32 @@ variable "vpc_cidr" {
   default     = "10.160.0.0/16"
 }
 
-variable "container_image" {
-  description = "Docker image to run on ECS Fargate"
+variable "cluster_name" {
+  description = "EKS Cluster identifier"
   type        = string
-  default     = "ghcr.io/vijaykarthiktk/chronosai-analytics:latest"
+  default     = "chronosai-production-cluster"
 }
 
-variable "db_name" {
-  description = "RDS Database Name"
-  type        = string
-  default     = "chronosai_forecasting"
+variable "eks_node_instance_types" {
+  description = "Instance sizing list for EKS Node Group"
+  type        = list(string)
+  default     = ["t3.medium"]
 }
 
-variable "db_user" {
-  description = "RDS Database Admin User"
-  type        = string
-  default     = "postgres"
+variable "node_group_min" {
+  description = "Minimum active worker node threshold"
+  type        = number
+  default     = 2
 }
 
-variable "db_password" {
-  description = "RDS Database Admin Password"
-  type        = string
-  default     = "SuperSecurePassword123"
+variable "node_group_max" {
+  description = "Maximum active worker node threshold for traffic surges"
+  type        = number
+  default     = 8
+}
+
+variable "node_group_desired" {
+  description = "Target initial active worker node count"
+  type        = number
+  default     = 3
 }
