@@ -127,7 +127,7 @@ resource "aws_route_table_association" "private_assoc" {
 
 # 9. IAM Role for EKS Cluster Control Plane
 resource "aws_iam_role" "eks_cluster_role" {
-  name = "chronosai-eks-cluster-role"
+  name = "chronosai-eks-cluster-role-v3"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -148,7 +148,7 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 
 # 10. IAM Role for EKS Worker Nodes
 resource "aws_iam_role" "eks_node_role" {
-  name = "chronosai-eks-node-role"
+  name = "chronosai-eks-node-role-v3"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
