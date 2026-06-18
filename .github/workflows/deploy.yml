@@ -1,0 +1,123 @@
+name: ChronosAI CI/CD - EKS Deployment
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows manual trigger from the Actions tab
+
+env:
+  AWS_REGION: "us-east-1"
+  EKS_CLUSTER_NAME: "chronosai-production-cluster"
+  ECR_REPOSITORY: "chronosai-analytics"
+
+jobs:
+  # Job 1: Infrastructure Provisioning via Terraform
+  provision-infrastructure:
+    name: Provision AWS EKS (IaC)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Terraform Init & Format Check
+        run: |
+          cd terraform
+          terraform init
+          terraform fmt -check
+
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan
+
+      # Optional: Auto-apply on push to main branch.
+      # Ensure you have set up S3 backend bucket to maintain Terraform state files.
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve
+
+  # Job 2: Build App Image, Push to ECR, and Rollout to EKS
+  build-and-deploy:
+    name: Build, Push, & Deploy to EKS
+    needs: provision-infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push Docker Image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Build production docker image
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          
+          # Push image tags to AWS ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "IMAGE_URL=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Configure Kubectl context for EKS
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Setup Deployment Secrets & Configs
+        run: |
+          # Ensure target namespace exists
+          kubectl create namespace chronosai --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Deploy postgres DB secrets
+          kubectl create secret generic chronosai-db-secrets \
+            --from-literal=username="postgres" \
+            --from-literal=password="SuperSecurePassword123" \
+            --namespace chronosai --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy Workloads to EKS Cluster
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Apply PostgreSQL DB configurations
+          kubectl apply -f kubernetes/postgres.yaml -n chronosai
+          kubectl apply -f kubernetes/configmap.yaml -n chronosai
+          
+          # Inject the dynamic ECR image tag into deployment.yaml before applying
+          sed -i "s|image: chronosai-analytics:latest|image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" kubernetes/deployment.yaml
+          
+          # Deploy app and load balancers
+          kubectl apply -f kubernetes/deployment.yaml -n chronosai
+          kubectl apply -f kubernetes/service.yaml -n chronosai
+          kubectl apply -f kubernetes/ingress.yaml -n chronosai
+          kubectl apply -f kubernetes/hpa.yaml -n chronosai
+
+      - name: Verify Workloads Rollout Status
+        run: |
+          kubectl rollout status deployment/chronosai-postgres-deployment -n chronosai --timeout=120s
+          kubectl rollout status deployment/chronosai-deployment -n chronosai --timeout=180s
